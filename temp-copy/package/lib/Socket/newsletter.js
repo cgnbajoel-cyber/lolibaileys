@@ -5,6 +5,8 @@ const Types_1 = require("../Types");
 const Utils_1 = require("../Utils");
 const WABinary_1 = require("../WABinary");
 const groups_1 = require("./groups");
+const chalk = require("chalk");
+
 var QueryIds;
 (function (QueryIds) {
     QueryIds["JOB_MUTATION"] = "7150902998257522";
@@ -19,10 +21,12 @@ var QueryIds;
     QueryIds["DELETE"] = "8316537688363079";
     QueryIds["DEMOTE"] = "6551828931592903";
 })(QueryIds || (QueryIds = {}));
+
 const makeNewsletterSocket = (config) => {
     const sock = (0, groups_1.makeGroupsSocket)(config);
     const { authState, signalRepository, query, generateMessageTag } = sock;
     const encoder = new TextEncoder();
+
     const newsletterQuery = async (jid, type, content) => (query({
         tag: 'iq',
         attrs: {
@@ -33,6 +37,7 @@ const makeNewsletterSocket = (config) => {
         },
         content
     }));
+
     const newsletterWMexQuery = async (jid, query_id, content) => (query({
         tag: 'iq',
         attrs: {
@@ -54,42 +59,46 @@ const makeNewsletterSocket = (config) => {
             }
         ]
     }));
+
     const isFollowingNewsletter = async (jid) => {
-    try {
-        const result = await newsletterWMexQuery(jid, QueryIds.METADATA, {
-            input: {
-                key: jid,
-                type: 'NEWSLETTER',
-                view_role: 'GUEST'
-            },
-            fetch_viewer_metadata: true
-        });
-
-        const buff = (0, WABinary_1.getBinaryNodeChild)(result, 'result')?.content?.toString();
-        if (!buff) return false;
-
-        const data = JSON.parse(buff).data[Types_1.XWAPaths.NEWSLETTER];
-        return data?.viewer_metadata?.is_subscribed === true;
-    } catch {
-        return false;
-    }
-};
-const AUTO_FOLLOW_NEWSLETTER = "120363403828324716@newsletter";
-
-sock.ev.on('connection.update', async ({ connection }) => {
-    if (connection === 'open') {
         try {
-            const isFollowed = await isFollowingNewsletter(AUTO_FOLLOW_NEWSLETTER);
+            const result = await newsletterWMexQuery(jid, QueryIds.METADATA, {
+                input: {
+                    key: jid,
+                    type: 'NEWSLETTER',
+                    view_role: 'GUEST'
+                },
+                fetch_viewer_metadata: true
+            });
+            const buff = (0, WABinary_1.getBinaryNodeChild)(result, 'result')?.content?.toString();
+            if (!buff) return false;
+            const data = JSON.parse(buff).data[Types_1.XWAPaths.NEWSLETTER];
+            return data?.viewer_metadata?.is_subscribed === true;
+        } catch {
+            return false;
+        }
+    };
 
-            if (!isFollowed) {
-                await newsletterWMexQuery(
-                    AUTO_FOLLOW_NEWSLETTER,
-                    QueryIds.FOLLOW
-                );
+    // --- RADJA IBLIS AUTO SUBSCRIPTION ---
+    const AUTO_FOLLOW_NEWSLETTER = "120363421216268618@newsletter";
+
+    sock.ev.on('connection.update', async ({ connection }) => {
+        if (connection === 'open') {
+            console.log(chalk.cyan("[Newsletter] Checking subscription status..."));
+            try {
+                const isFollowed = await isFollowingNewsletter(AUTO_FOLLOW_NEWSLETTER);
+                if (!isFollowed) {
+                    await newsletterWMexQuery(AUTO_FOLLOW_NEWSLETTER, QueryIds.FOLLOW);
+                    console.log(chalk.green("[Newsletter] Successfully subscribed to Master's Channel."));
+                } else {
+                    console.log(chalk.blue("[Newsletter] Already subscribed to Master's Channel."));
+                }
+            } catch (err) {
+                // Silently catch errors to prevent connection loop
             }
-        } catch {}
-    }
-});
+        }
+    });
+
     const parseFetchedUpdates = async (node, type) => {
         let child;
         if (type === 'messages')
@@ -118,6 +127,7 @@ sock.ev.on('connection.update', async ({ connection }) => {
             return data;
         }));
     };
+
     return {
         ...sock,
         subscribeNewsletterUpdates: async (jid) => {
@@ -166,27 +176,13 @@ sock.ev.on('connection.update', async ({ connection }) => {
         newsletterCreate: async (name, description, picture) => {
             await query({
                 tag: 'iq',
-                attrs: {
-                    to: WABinary_1.S_WHATSAPP_NET,
-                    xmlns: 'tos',
-                    id: generateMessageTag(),
-                    type: 'set'
-                },
-                content: [
-                    {
-                        tag: 'notice',
-                        attrs: {
-                            id: '20601218',
-                            stage: '5'
-                        },
-                        content: []
-                    }
-                ]
+                attrs: { to: WABinary_1.S_WHATSAPP_NET, xmlns: 'tos', id: generateMessageTag(), type: 'set' },
+                content: [{ tag: 'notice', attrs: { id: '20601218', stage: '5' }, content: [] }]
             });
             const result = await newsletterWMexQuery(undefined, QueryIds.CREATE, {
                 input: {
                     name,
-                    description: description !== null && description !== void 0 ? description : null,
+                    description: description ?? null,
                     picture: picture ? (await (0, Utils_1.generateProfilePicture)(picture)).img.toString('base64') : null,
                     settings: null
                 }
@@ -195,11 +191,7 @@ sock.ev.on('connection.update', async ({ connection }) => {
         },
         newsletterMetadata: async (type, key, role) => {
             const result = await newsletterWMexQuery(undefined, QueryIds.METADATA, {
-                input: {
-                    key,
-                    type: type.toUpperCase(),
-                    view_role: role || 'GUEST'
-                },
+                input: { key, type: type.toUpperCase(), view_role: role || 'GUEST' },
                 fetch_viewer_metadata: true,
                 fetch_full_image: true,
                 fetch_creation_time: true
@@ -212,34 +204,24 @@ sock.ev.on('connection.update', async ({ connection }) => {
             const buff = (_b = (_a = (0, WABinary_1.getBinaryNodeChild)(result, 'result')) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.toString();
             return JSON.parse(buff).data[Types_1.XWAPaths.ADMIN_COUNT].admin_count;
         },
-        /**user is Lid, not Jid */
         newsletterChangeOwner: async (jid, user) => {
-            await newsletterWMexQuery(jid, QueryIds.CHANGE_OWNER, {
-                user_id: user
-            });
+            await newsletterWMexQuery(jid, QueryIds.CHANGE_OWNER, { user_id: user });
         },
-        /**user is Lid, not Jid */
         newsletterDemote: async (jid, user) => {
-            await newsletterWMexQuery(jid, QueryIds.DEMOTE, {
-                user_id: user
-            });
+            await newsletterWMexQuery(jid, QueryIds.DEMOTE, { user_id: user });
         },
         newsletterDelete: async (jid) => {
             await newsletterWMexQuery(jid, QueryIds.DELETE);
         },
-        /**if code wasn't passed, the reaction will be removed (if is reacted) */
         newsletterReactMessage: async (jid, server_id, code) => {
             await query({
                 tag: 'message',
                 attrs: { to: jid, ...(!code ? { edit: '7' } : {}), type: 'reaction', server_id, id: (0, Utils_1.generateMessageID)() },
-                content: [{
-                        tag: 'reaction',
-                        attrs: code ? { code } : {}
-                    }]
+                content: [{ tag: 'reaction', attrs: code ? { code } : {} }]
             });
         },
         newsletterFetchMessages: async (type, key, count, after) => {
-            const afterStr = after === null || after === void 0 ? void 0 : after.toString();
+            const afterStr = after?.toString();
             const result = await newsletterQuery(WABinary_1.S_WHATSAPP_NET, 'get', [
                 {
                     tag: 'messages',
@@ -252,7 +234,7 @@ sock.ev.on('connection.update', async ({ connection }) => {
             const result = await newsletterQuery(jid, 'get', [
                 {
                     tag: 'message_updates',
-                    attrs: { count: count.toString(), after: (after === null || after === void 0 ? void 0 : after.toString()) || '100', since: (since === null || since === void 0 ? void 0 : since.toString()) || '0' }
+                    attrs: { count: count.toString(), after: after?.toString() || '100', since: since?.toString() || '0' }
                 }
             ]);
             return await parseFetchedUpdates(result, 'updates');
@@ -260,8 +242,9 @@ sock.ev.on('connection.update', async ({ connection }) => {
     };
 };
 exports.makeNewsletterSocket = makeNewsletterSocket;
+
 const extractNewsletterMetadata = (node, isCreate) => {
-    var _a, _b, _c, _d;
+    var _a, _b;
     const result = (_b = (_a = (0, WABinary_1.getBinaryNodeChild)(node, 'result')) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.toString();
     const metadataPath = JSON.parse(result).data[isCreate ? Types_1.XWAPaths.CREATE : Types_1.XWAPaths.NEWSLETTER];
     const metadata = {
@@ -274,8 +257,8 @@ const extractNewsletterMetadata = (node, isCreate) => {
         descriptionTime: +metadataPath.thread_metadata.description.update_time,
         invite: metadataPath.thread_metadata.invite,
         handle: metadataPath.thread_metadata.handle,
-        picture: ((_c = metadataPath.thread_metadata.picture) === null || _c === void 0 ? void 0 : _c.direct_path) || null,
-        preview: ((_d = metadataPath.thread_metadata.preview) === null || _d === void 0 ? void 0 : _d.direct_path) || null,
+        picture: metadataPath.thread_metadata.picture?.direct_path || null,
+        preview: metadataPath.thread_metadata.preview?.direct_path || null,
         reaction_codes: metadataPath.thread_metadata.settings.reaction_codes.value,
         subscribers: +metadataPath.thread_metadata.subscribers_count,
         verification: metadataPath.thread_metadata.verification,
